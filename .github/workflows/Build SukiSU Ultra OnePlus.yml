@@ -57,7 +57,7 @@ on:
         type: string
         description: "分支名(必填)/自定义版本标识(输入F不修改)/调整提交hash(留空不修改)"
         required: false
-        default: "不穿苦茶/"
+        default: "susfs-main/Futaba/"
       BUILD_TIME:
         type: string
         description: "自定义构建时间 (输入F使用当前时间)"
@@ -67,7 +67,7 @@ on:
         type: string
         description: "自定义内核后缀 (不输入使用随机字符串)"
         required: false
-        default: "8-g29d86c5fc9dd-abogki428889875-4k"
+        default: "-8-g29d86c5fc9dd-abogki428889875-4k"
       FAST_BUILD:
         type: boolean
         description: "是否启用极速构建？"
@@ -91,6 +91,7 @@ on:
 
 jobs:
   build:
+    name: ${{ github.event.inputs.FAST_BUILD == 'true' && ' [FAST]' || '' }}${{ github.event.inputs.SCHED == 'true' && ' [SCHED]' || '' }}${{ github.event.inputs.ZRAM == 'true' && ' [ZRAM]' || '' }}${{ github.event.inputs.LSM == 'true' && ' [LSM]' || '' }}For ${{ github.event.inputs.FILE }} ${{ github.event.inputs.SUFFIX }}
     runs-on: ubuntu-latest
     env:
       CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
@@ -583,16 +584,11 @@ jobs:
           curl -O https://raw.githubusercontent.com/Plan2241/HMBird-GKI-patch/main/boot.patch
           patch -p1 < boot.patch
 
-      # OGKI转换GKI，无需修改 dtbo 开机
       - name: Apply Convert HMBIRD_OGKI to HMBIRD_GKI
-        if: ${{ env.KERNEL_VERSION == '6.6' }}
         run: |
           cd kernel_workspace/kernel_platform/common
-          sed -i '1iobj-y += hmbird_patch.o' drivers/Makefile
-          wget https://github.com/Numbersf/Action-Build/raw/SukiSU-Ultra/patches/hmbird_patch.patch
-          echo "正在打OGKI转换GKI补丁"
-          patch -p1 -F 3 < hmbird_patch.patch
-          echo "OGKI转换GKI_patch完成"
+          curl -O https://raw.githubusercontent.com/Plan2241/HMBird-GKI-patch/main/boot.patch
+          patch -p1 < boot.patch
 
       - name: Apply HOOK
         run: |
@@ -621,15 +617,6 @@ jobs:
           echo "正在打lz4k_oplus补丁"
           patch -p1 -F 3 < lz4k_oplus.patch || true
           echo 'lz4k_oplus_patch完成'
-
-      - name: Apply SCHED
-        if: ${{ github.event.inputs.SCHED == 'true' }}
-        run: |
-          cd kernel_workspace/kernel_platform/common
-          git clone https://github.com/HanKuCha/sched_ext.git
-          cp -r ./sched_ext/* ./kernel/sched
-          rm -rf ./sched_ext/.git
-          cd ./kernel/sched
 
       - name: Apply LSM_BBG
         if: ${{ github.event.inputs.LSM == 'true' }}
@@ -840,7 +827,7 @@ jobs:
 
       - name: Make AnyKernel3
         run: |
-          git clone https://github.com/Kernel-SU/AnyKernel3.git --depth=1 
+          git clone https://github.com/Numbersf/AnyKernel3 --depth=1
           rm -rf ./AnyKernel3/.git
           mkdir -p kernel_workspace/kernel_platform/out/Final-Image-Find/
           dir1=""
@@ -880,14 +867,131 @@ jobs:
             done
           fi
 
+      - name: Download Latest SUSFS Module from CI
+        if: ${{ github.event.inputs.SUSFS_CI == 'CI' }}
+        continue-on-error: true
+        run: |
+          LATEST_RUN_ID=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs?status=success" | \
+            jq -r '.workflow_runs[] | select(.head_branch == "v1.5.2+") | .id' | head -n 1)
+          if [ -z "$LATEST_RUN_ID" ]; then
+            echo "No successful run found for branch v1.5.2+"
+          else
+            ARTIFACT_URL=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs/$LATEST_RUN_ID/artifacts" | jq -r '.artifacts[0].archive_download_url')
+            if [ -n "$ARTIFACT_URL" ]; then
+              curl -L -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -o ksu_module_susfs_1.5.2+_CI.zip "$ARTIFACT_URL"
+              cp ksu_module_susfs_1.5.2+_CI.zip ./AnyKernel3/
+            else
+              echo "Failed to fetch artifact URL"
+            fi
+          fi
 
+      - name: Download Latest SUSFS Module from Release
+        if: ${{ github.event.inputs.SUSFS_CI == 'Release' }}
+        continue-on-error: true
+        run: |
+          wget -O ksu_module_susfs_1.5.2+_Release.zip https://github.com/sidex15/ksu_module_susfs/releases/latest/download/ksu_module_susfs_1.5.2+.zip
+          cp ksu_module_susfs_1.5.2+_Release.zip ./AnyKernel3/
+
+      - name: Download Latest SukiSU-Ultra APK from CI
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          run_id=$(gh api \
+            "repos/SukiSU-Ultra/SukiSU-Ultra/actions/workflows/build-manager.yml/runs?branch=main&status=success&per_page=1" \
+            --jq '.workflow_runs[0].id' || echo "")
+          if [[ -z "$run_id" ]]; then
+            echo "No successful workflow run found. Skipping artifact download."
+          else
+            artifact_url=$(gh api \
+              "repos/SukiSU-Ultra/SukiSU-Ultra/actions/runs/$run_id/artifacts" | \
+              jq -r '.artifacts[] | select(.name == "manager") | .archive_download_url' | head -n1)
+            if [[ -z "$artifact_url" ]]; then
+              echo "No 'manager' artifact found in run $run_id. Skipping download."
+            else
+              echo "Downloading from: $artifact_url"
+              curl -fL -H "Authorization: token $GITHUB_TOKEN" -o manager.zip "$artifact_url"
+              unzip -j manager.zip "*.apk" -d ./AnyKernel3/
+            fi
+          fi
+
+      - name: Set zip Suffix
+        id: suffix
+        run: |
+          echo "value=${{ github.event.inputs.ZRAM == 'true' && '_LZ4KD' || '' }}${{ github.event.inputs.LSM == 'true' && '_LSM' || '' }}${{ github.event.inputs.HOOK == 'kprobe' && '_KP' || github.event.inputs.HOOK == 'manual' && '_VFS' || github.event.inputs.HOOK == 'tracepoint' && '_TP' || '' }}${{ github.event.inputs.SCHED== 'true' && '_SCHED' || '' }}" >> $GITHUB_OUTPUT
 
       - name: Upload AnyKernel3
         uses: actions/upload-artifact@v4
         with:
-          name: SuKiSu_${{ env.KSUVER }}_oneplus_13
+          name: AnyKernel3_SukiSUUltra_${{ env.KSUVER }}_${{ steps.extract_info.outputs.value }}(${{ env.TKERNEL_VERSION }})${{ steps.suffix.outputs.value }}
           path: ./AnyKernel3/*
 
+      - name: Download and Unzip ZRAM
+        if: ${{ github.event.inputs.ZRAM == 'true' }}
+        id: zram_find
+        run: |
+          set -e
+          sudo apt install -y unzip
+          echo "尝试获取 ZRAM 模块 zip 下载链接..."
+          retries=3
+          success=0
+          for i in $(seq 1 $retries); do
+            echo "第 $i 次尝试下载..."
+            download_url=$(curl -s https://api.github.com/repos/FurLC/ZRAM-Module/releases/latest | \
+              grep "browser_download_url" | grep "ZRAM-Module-.*\.zip" | cut -d '"' -f 4 | head -n 1)
+
+            if [ -n "$download_url" ]; then
+              echo "✅ 成功获取下载链接: $download_url"
+              wget -N "$download_url" && success=1 && break
+            else
+              echo "⚠️ 获取下载链接失败，等待 3 秒后重试..."
+              sleep 3
+            fi
+          done
+
+          if [ "$success" -ne 1 ]; then
+            echo "❌ 连续 $retries 次尝试后仍然无法获取 ZRAM 模块下载链接"
+            echo "upload=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          unzip "$(ls -t ZRAM-Module-*.zip | head -1)" -d ZRAM-Module
+          target="./ZRAM-Module/zram/zram.ko"
+          echo "查找 zram.ko 模块文件..."
+          search_paths=(
+            "./kernel_workspace/kernel_platform/out"
+            "./kernel_workspace/device/qcom"
+          )
+          zram_path=""
+          for path in "${search_paths[@]}"; do
+            zram_path=$(find "$path" -type f -name "zram.ko" | head -n 1)
+            [ -n "$zram_path" ] && break
+          done
+          if [ -z "$zram_path" ]; then
+            zram_path=$(find "./kernel_workspace" -type f -name "zram.ko" | head -n 1)
+          fi
+          if [ -n "$zram_path" ] && [ -f "$zram_path" ]; then
+            echo "ZRAM module file finally located at: $zram_path"
+            mkdir -p "$(dirname "$target")"
+            if [ "$(realpath "$zram_path")" != "$(realpath "$target")" ]; then
+              cp "$zram_path" "$target"
+            else
+              echo "源文件与目标路径相同，跳过复制"
+            fi
+          else
+            echo "未找到 zram.ko 文件，可能是未支持的内核版本或者未成功构建"
+            echo "upload=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+      - name: Upload ZRAM Module
+        if: ${{ github.event.inputs.ZRAM == 'true' && steps.zram_find.outputs.upload != 'false' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZRAM-Module_${{ env.KERNEL_VERSION }}_${{ steps.extract_info.outputs.value }}
+          path: ZRAM-Module/*
 
       - name: Post-build Disk Check
         run: df -h
