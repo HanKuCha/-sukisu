@@ -580,9 +580,7 @@ jobs:
           echo "正在打隐藏应用补丁"
           patch -p1 -F 3 < 69_hide_stuff.patch
           echo "隐藏应用_patch完成"
-          
-          curl -O https://raw.githubusercontent.com/Plan2241/HMBird-GKI-patch/main/boot.patch
-          patch -p1 < boot.patch
+
 
       - name: Apply Convert HMBIRD_OGKI to HMBIRD_GKI
         run: |
